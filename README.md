@@ -16,6 +16,7 @@ Built with **.NET 8 Blazor Web App (Interactive Server)**, **ASP.NET Core Identi
 - [Seed data and default accounts](#seed-data-and-default-accounts)
 - [Running the tests](#running-the-tests)
 - [Project structure](#project-structure)
+- [Screenshots](#screenshots)
 - [Data model](#data-model)
 - [Application routes](#application-routes)
 - [Troubleshooting](#troubleshooting)
@@ -300,6 +301,22 @@ dotnet test minutesheet.Tests
 ├── resources/images/                   # Brand assets
 └── Fertilizer company login page/      # Login page design prototype
 ```
+## Screenshots
+
+<p align="center">
+  <img width="896" height="504" alt="image" src="https://github.com/user-attachments/assets/79bbc14a-bb04-4e6a-bbaf-34594910fbb4" />
+  <img width="886" height="499" alt="image" src="https://github.com/user-attachments/assets/8cff6843-1bf1-4942-ba3d-3b86fdab77c0" />
+  <img width="816" height="459" alt="image" src="https://github.com/user-attachments/assets/24866057-1b85-4651-b67a-44edf9f496dd" />
+  <img width="807" height="455" alt="image" src="https://github.com/user-attachments/assets/ab61dd18-5192-4640-a3e4-ce43cc1bbd9a" />
+  <img width="975" height="549" alt="image" src="https://github.com/user-attachments/assets/cc8c61cc-d3d9-4862-954a-dd3050490888" />
+  <img width="975" height="548" alt="image" src="https://github.com/user-attachments/assets/596725e8-6aec-4c3c-8eed-498da860eca7" />
+  <img width="975" height="548" alt="image" src="https://github.com/user-attachments/assets/797cf2fd-df6c-4d4d-b512-6ed59bf99134" />
+  <img width="975" height="548" alt="image" src="https://github.com/user-attachments/assets/7c51a877-fdc3-4d4b-87e3-664597c4a86f" />
+  <img width="975" height="548" alt="image" src="https://github.com/user-attachments/assets/32c9d5ae-25b2-45a7-a365-3702d3574e6b" />
+  <img width="975" height="548" alt="image" src="https://github.com/user-attachments/assets/ae4330ca-4f70-4f77-a38f-1e3bd09a18c2" />
+  <img width="975" height="548" alt="image" src="https://github.com/user-attachments/assets/3a9328d8-dc1b-4e10-b1cc-80efd4c528b6" />
+</p>
+
 
 ---
 
