@@ -1,60 +1,136 @@
-# Minute Sheet
+# Collaborative Minute Sheet
 
-An internal tool for creating **minute sheets** and routing them through a dynamic, multi-step **approval workflow**. Built as a .NET 8 **Blazor Web App** (Interactive Server) with ASP.NET Core Identity, it provides branded sign-up/login with real email OTP verification, a dashboard for authoring minute sheets (rich text + attachments + audio dictation), a configurable approver chain with a review/resolve loop, and per-user history.
+An internal web application for **FFC (Fauji Fertilizer Company)** that digitises the minute-sheet process: employees author minute sheets, route them through a configurable **multi-step review/approval chain**, collaborate through comments and sharing, and use **AI** to summarise attachments, extract action items, draft next-meeting agendas, and dictate content in **English or Urdu**.
 
-Brand: `#000066` · Poppins.
+Built with **.NET 8 Blazor Web App (Interactive Server)**, **ASP.NET Core Identity**, **Entity Framework Core** and **SQL Server**.
+
+---
+
+## Table of contents
+
+- [Features](#features)
+- [Tech stack](#tech-stack)
+- [Architecture](#architecture)
+- [Getting started](#getting-started)
+- [Configuration reference](#configuration-reference)
+- [Seed data and default accounts](#seed-data-and-default-accounts)
+- [Running the tests](#running-the-tests)
+- [Project structure](#project-structure)
+- [Data model](#data-model)
+- [Application routes](#application-routes)
+- [Troubleshooting](#troubleshooting)
+- [Security notes](#security-notes)
 
 ---
 
 ## Features
 
-- **Authentication & accounts**
-  - Branded sign-up / login (email + password), with extended employee fields: full name, employee number, designation, and department.
-  - **Email verification via 6-digit OTP** (Identity's numeric token provider) — unverified users can't sign in.
-  - Password reset, 2FA, and account management (from the ASP.NET Core Identity scaffold).
-  - Departments seeded on first run: **HR, ICT, Finance, Admin**.
+### Authentication and accounts
+- Self-service **registration** with employee details: full name, employee number, designation and department.
+- **Email verification by 6-digit OTP**. Unconfirmed accounts cannot sign in.
+- **Two-step login**: sign in with **email or employee number** and password, then enter a one-time code sent by email.
+- Optional **authenticator-app 2FA** (QR code via QRCoder), recovery codes, password reset and change.
+- **Profile settings** with avatar upload.
+- Two roles, **Admin** and **Employee**. Accounts without a role are backfilled as Employee on startup.
 
-- **Minute sheets** (`/dashboard/create`)
-  - Category: **Financial / Non-Financial**.
-  - **Confidentiality:** Toggle between **Non-Confidential** (viewable by all) and **Confidential** (viewable only by creator, approvers, and admins).
-  - **Rich-text description** via a self-hosted **Quill** editor.
-  - **Audio Dictation:** Real-time speech-to-text using local Whisper CLI integration (supports English and Urdu), with Urdu-to-English translation capabilities.
-  - **Attachment** upload (`.pdf`, `.doc`, `.docx`, up to 10 MB), stored under `wwwroot/uploads/`.
-  - **Dynamic approval workflow** — add/remove rows, set each step to **Review** or **Approve**, pick an approver; the **final step is always Approve**. 
+### Minute sheets (`/dashboard/create`)
+- Title, **category** (Financial / Non-Financial), with **amount and currency** for financial sheets.
+- **Initiating department** and **intended-for department**.
+- **Confidential** flag: confidential sheets are visible only to the creator, approvers, admins and users the sheet was explicitly shared with.
+- **Rich-text description** in a self-hosted **Quill** editor.
+- **Attachment** upload (`.pdf`, `.doc`, `.docx`, up to 10 MB), stored under `wwwroot/uploads/`.
+- **Dynamic approval chain**: add or remove rows, choose an approver and mark each step as **Review** or **Approve**. The last step is always **Approve**.
+- Download the sheet's summary and description as **Word (.docx / .doc)** or **PDF**, branded with the FFC logo.
 
-- **Approval flow** (`/dashboard/sheet/{token}`)
-  - Each approver gets an emailed link to review or approve.
-  - **Review** requires a comment; **Approve** does not.
-  - **Review → Resolve loop:** a reviewed step returns to the creator, who resolves it and can make a **limited edit** to the description/attachment while approvals are in progress.
-  - A sheet is **Approved** only when every step is approved.
+### Hierarchical approval workflow (`/dashboard/sheet/{token}`)
+- Steps run **in order**: only the lowest-numbered unapproved step can act. Later approvers wait.
+- **Review** needs a comment and sends the sheet back to the creator. **Approve** does not need a comment.
+- **Review → resolve loop**: the creator resolves the review, can make limited edits, and the reviewer is notified to look again.
+- A sheet becomes **Approved** only when every step is approved. Status is shown as `Pending`, `Review` or `Approved`.
+- Every sheet is reached through an unguessable GUID link.
 
-- **History & Actions**
-  - `/dashboard/history` — the user's own sheets, with status, approval progress, and edit/delete/open actions.
-  - `/dashboard/actions` — items **pending your approval** and **reviews to resolve**.
+### Collaboration
+- **Share** a sheet with any user by email. Sharing gives **read-only** access, and the email includes a **PDF copy** generated with QuestPDF.
+- Users a sheet was shared with can send **suggestions** or an **"It's all OK"** acknowledgement.
+- A full **comment thread** records reviews, approvals and resolutions.
 
-- **AI Document Summarization & Extraction**
-  - **Document Transcribing:** Automatically extracts textual content from attached PDF (`PdfPig`) and Word (`DocumentFormat.OpenXml`) files.
-  - **Smart Summaries & Extraction:** Connects to the OpenRouter AI API (`google/gemma-4-26b-a4b-it:free`) to generate professional **Summaries**, **Action Items**, and **Agendas** based on the sheet's description and transcribed attachment content.
-  - **Translation:** Translates Urdu transcriptions to English.
+### Email notifications
+Emails are queued and sent by a background service, so workflow actions stay fast. Notifications go out when:
+- a sheet is submitted or updated (to every approver),
+- a reviewer leaves a review (to the creator),
+- the creator resolves a review (to the reviewer),
+- a sheet is fully approved (to the creator),
+- a sheet is shared (to the recipient, with a PDF attached).
 
-- **Email delivery** — prefers the **Brevo HTTP API** (HTTPS/443, rarely blocked); falls back to **SMTP** (MailKit) when only SMTP settings are provided. 
+Delivery uses the **Brevo HTTP API** when an API key is set and falls back to **SMTP (MailKit)**.
+
+### AI features (OpenRouter)
+All LLM calls go through OpenRouter using `google/gemma-4-26b-a4b-it:free`, with Polly retries (exponential backoff on transient errors and HTTP 429).
+- **Document summarisation**: extracts text from PDF (PdfPig) and Word (OpenXml) attachments, combines it with the description, and produces an English summary.
+- **Action-item extraction** and **next-meeting agenda** generation.
+- **Urdu → English translation**.
+- An **LLM safety net** rejects "meta" responses (for example *"please provide…"*) and falls back to the original text.
+
+### Voice dictation (English and Urdu)
+The browser records audio with `MediaRecorder` and posts it to `POST /api/transcriptions`, which runs this pipeline:
+
+1. Load the admin-managed **domain vocabulary** (people, products, platforms, technologies, abbreviations).
+2. **Transcribe** with **Groq Whisper** (`whisper-large-v3`), using the vocabulary as a prompt. If Groq fails or is not chosen, it falls back to a **local Whisper CLI**.
+3. Skip the AI steps for very short transcripts (fewer than 3 words).
+4. **Correct** the transcript against the vocabulary with an LLM.
+5. Check whether the text is English, using an Urdu-script and Roman-Urdu heuristic.
+6. **Translate** Urdu, Roman Urdu or mixed text into professional English.
+
+### Admin panel
+- **Dashboard** with an overview chart of sheet statuses.
+- **All sheets**: every minute sheet in the system.
+- **Users**: list, filter by role, create and edit users.
+- **Departments**: create and manage departments.
+- **Vocabulary**: manage the domain terms and aliases used by dictation.
 
 ---
 
 ## Tech stack
 
-| Area        | Choice |
-|-------------|--------|
-| Framework   | .NET 8 · Blazor Web App (Interactive Server render mode) |
-| Auth        | ASP.NET Core Identity (`Microsoft.AspNetCore.Identity.EntityFrameworkCore`) |
-| Data        | Entity Framework Core + SQL Server LocalDB |
-| Email       | Brevo HTTP API or SMTP via MailKit |
-| Rich text   | Quill (self-hosted under `wwwroot/lib/quill`) |
-| AI / LLM    | OpenRouter API (`google/gemma-4-26b-a4b-it:free`) |
-| Dictation   | Local Whisper CLI via Python + `ffmpeg` |
-| Text Extract| PdfPig & DocumentFormat.OpenXml for text extraction |
-| 2FA QR      | QRCoder |
-| UI          | Bootstrap + custom CSS (`wwwroot/app.css`), Poppins |
+| Area | Technology |
+|------|------------|
+| Framework | .NET 8, Blazor Web App (Interactive Server render mode) |
+| Auth | ASP.NET Core Identity with roles, email OTP, TOTP 2FA (QRCoder) |
+| Data | Entity Framework Core 8 + SQL Server (LocalDB by default) |
+| Email | Brevo HTTP API or SMTP via MailKit, with a background queue |
+| Rich text | Quill (self-hosted in `wwwroot/lib/quill`) |
+| AI / LLM | OpenRouter API (`google/gemma-4-26b-a4b-it:free`) |
+| Speech-to-text | Groq Whisper API (`whisper-large-v3`), with local OpenAI Whisper CLI as fallback |
+| Document parsing | UglyToad.PdfPig, DocumentFormat.OpenXml |
+| Document generation | QuestPDF (share PDFs), PDFsharp + OpenXml + SkiaSharp (summary exports) |
+| Resilience | Polly (`Microsoft.Extensions.Http.Polly`) |
+| UI | Bootstrap 5 + custom CSS, Poppins font, brand colour `#000066` |
+| Tests | xUnit, Moq, EF Core InMemory |
+
+---
+
+## Architecture
+
+```
+Browser (Blazor Server over SignalR)
+   │
+   ├── Razor components (Pages/Dashboard, Pages/Admin, Account)
+   │       │
+   │       ├── ApplicationDbContext (EF Core) ──► SQL Server
+   │       ├── EmailQueue ──► EmailBackgroundService ──► SmtpEmailSender ──► Brevo API / SMTP
+   │       ├── DocumentSummarizationService ──► OpenRouterClient ──► OpenRouter API
+   │       ├── SheetPdfService (QuestPDF) / SheetExporter (DOCX, DOC, PDF)
+   │       └── ToastService
+   │
+   └── POST /api/transcriptions (minimal API, requires sign-in)
+           └── DictationPipelineService
+                 ├── GroqTranscriptionService ──► Groq API
+                 ├── LocalWhisperTranscriptionService ──► whisper CLI (fallback)
+                 ├── TranscriptCorrectionService ──► OpenRouter
+                 └── TranslationService ──► OpenRouter
+```
+
+On startup the app **applies pending EF Core migrations automatically**, restores the development seed snapshot, and makes sure the roles and bootstrap admin account exist.
 
 ---
 
@@ -62,163 +138,228 @@ Brand: `#000066` · Poppins.
 
 ### Prerequisites
 
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (targets `net8.0`)
-- SQL Server **LocalDB** (included with Visual Studio or via SqlLocalDB)
-- **Python** and **ffmpeg** (for Audio Dictation)
-- Whisper CLI: `pip install -U openai-whisper setuptools-rust`
-- Optional: `dotnet-ef` for CLI migrations (`dotnet tool install --global dotnet-ef`)
+| Requirement | Needed for |
+|-------------|------------|
+| [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) | Building and running the app |
+| SQL Server **LocalDB** (comes with Visual Studio) or any SQL Server instance | Database |
+| [.NET 10 SDK](https://dotnet.microsoft.com/download) | Only for running the test project, which targets `net10.0` |
+| Python 3, `ffmpeg` on `PATH`, `pip install -U openai-whisper setuptools-rust` | Only for the **local** Whisper fallback |
+| OpenRouter API key | AI summary, action items, agenda, transcript correction, translation |
+| Groq API key | Cloud speech-to-text (the default dictation provider) |
+| Brevo API key **or** SMTP credentials | Sending OTP and notification emails |
 
-### 1. Clone
+> The app runs without the AI and email keys, but those features will fail or be skipped. **Email is required to log in**, because every login needs an emailed OTP.
+
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/HamzaSaeed7/minutesheet.git
 cd minutesheet
 ```
 
-### 2. Configure the database
+### 2. Database
 
-The default connection string points at LocalDB in `minutesheet/appsettings.json`:
+The default connection string in `minutesheet/appsettings.json` points to LocalDB:
 
 ```
-Server=(localdb)\mssqllocaldb;Database=aspnet-minutesheet-...;Trusted_Connection=True;MultipleActiveResultSets=true
+Server=(localdb)\mssqllocaldb;Database=aspnet-minutesheet-685136f4-...;Trusted_Connection=True;MultipleActiveResultSets=true
 ```
 
-Apply the EF Core migrations to create the schema (and seed departments):
+You don't need to do anything else. Migrations run automatically the first time the app starts. To apply them by hand instead:
 
 ```bash
+dotnet tool install --global dotnet-ef
 dotnet ef database update --project minutesheet
 ```
 
-### 3. Configure secrets (email and API keys)
+### 3. Secrets
 
-`appsettings.json` ships with **empty** placeholders — **never commit real credentials**. Provide them via user-secrets instead.
+Never commit real keys. Store them with **user-secrets** (run these from the `minutesheet/` project folder):
 
-**OpenRouter AI Settings (Required for AI Summaries, Actions, Agendas, Translation):**
-The system expects 4 separate API keys for different tasks (you can use the same key for all 4).
 ```bash
 cd minutesheet
-dotnet user-secrets set "OpenRouterSettings:ApiKeys:0" "your-openrouter-key-for-summary"
-dotnet user-secrets set "OpenRouterSettings:ApiKeys:1" "your-openrouter-key-for-action-items"
-dotnet user-secrets set "OpenRouterSettings:ApiKeys:2" "your-openrouter-key-for-agenda"
-dotnet user-secrets set "OpenRouterSettings:ApiKeys:3" "your-openrouter-key-for-translation"
+
+# OpenRouter — one key per slot (the same key can be used for all four)
+dotnet user-secrets set "OpenRouterSettings:ApiKeys:0" "sk-or-..."   # summary
+dotnet user-secrets set "OpenRouterSettings:ApiKeys:1" "sk-or-..."   # action items + transcript correction
+dotnet user-secrets set "OpenRouterSettings:ApiKeys:2" "sk-or-..."   # next-meeting agenda
+dotnet user-secrets set "OpenRouterSettings:ApiKeys:3" "sk-or-..."   # Urdu → English translation
+
+# Groq (speech-to-text)
+dotnet user-secrets set "ApiKeys:Groq" "gsk_..."
 ```
 
-**Local Whisper Model:**
-In `appsettings.json`, set the whisper model (defaults to `base`):
-```json
-"LocalWhisper": {
-  "Model": "base"
-}
-```
+**Email, option A: Brevo HTTP API (recommended, uses HTTPS port 443 so it is rarely blocked)**
 
-**Email Option A — Brevo HTTP API (recommended):**
 ```bash
-dotnet user-secrets set "EmailSettings:ApiKey" "xkeysib-your-key"
-dotnet user-secrets set "EmailSettings:From" "verified-sender@yourdomain.com"
+dotnet user-secrets set "EmailSettings:ApiKey" "xkeysib-..."
+dotnet user-secrets set "EmailSettings:From"   "verified-sender@yourdomain.com"
 ```
 
-**Email Option B — SMTP (e.g. Gmail app password / SendGrid):**
+**Email, option B: SMTP (for example a Gmail app password)**
+
 ```bash
-dotnet user-secrets set "EmailSettings:Host" "smtp.example.com"
-dotnet user-secrets set "EmailSettings:Port" "587"
-dotnet user-secrets set "EmailSettings:User" "you@example.com"
+dotnet user-secrets set "EmailSettings:Host"     "smtp.gmail.com"
+dotnet user-secrets set "EmailSettings:Port"     "587"
+dotnet user-secrets set "EmailSettings:User"     "you@example.com"
 dotnet user-secrets set "EmailSettings:Password" "your-app-password"
-dotnet user-secrets set "EmailSettings:From" "you@example.com"
+dotnet user-secrets set "EmailSettings:From"     "you@example.com"
 ```
+
+Instead of user-secrets you can also use a `.env` file in the repo root or in `minutesheet/`. `run.bat` loads it, and it is git-ignored. Supported variables: `EMAIL_HOST`, `EMAIL_USER` / `GMAIL_APP_USER`, `EMAIL_PASSWORD` / `GMAIL_APP_PASSWORD`, or any `Section__Key` form such as `OpenRouterSettings__ApiKeys__0`.
 
 ### 4. Run
 
 ```bash
-dotnet run --project minutesheet
+dotnet run --project minutesheet --launch-profile http
 ```
 
-Then open the URL shown in the console (defaults: `http://localhost:5285`, `https://localhost:7054`).
+On Windows you can also double-click **`run.bat`**.
 
-### 5. Seed data
+Open **http://localhost:5285**. With the `https` profile it is https://localhost:7054.
 
-On startup in Development the app restores a snapshot of a working database from
-`minutesheet/Data/Seed/seed-data.json` — departments, users, minute sheets and their
-full approval/comment history — so a fresh clone comes up with realistic data instead
-of an empty dashboard.
+### 5. Sign in
 
-- Every seeded account signs in with the password `Abcd1234!`. The export carries **no
-  password hashes**, so real credentials never reach the repo.
-- Seeding is idempotent: rows already present (matched on their original primary key)
-  are skipped, so restarting never duplicates anything.
-- It is off outside Development. Override either way with:
-
-```bash
-dotnet user-secrets set "Seed:LoadSnapshot" "false"
-```
-
-To refresh the snapshot from your own database, re-export each table with
-`FOR JSON PATH` into the same file shape (`departments`, `users`, `userRoles`, `sheets`,
-`approvalSteps`, `comments`, `shares`, `suggestions`, `vocabulary`).
+Log in as `admin@ffc.com` with password `Abcd1234!` (see [Seed data](#seed-data-and-default-accounts)), then enter the OTP sent to that address. **Change this password** on any shared or deployed instance.
 
 ---
 
 ## Configuration reference
 
-`EmailSettings`:
-- `ApiKey`: Brevo HTTP API key (`xkeysib-…`).
-- `Host`, `Port`, `User`, `Password`, `EnableSsl`, `From`, `FromName`: Standard SMTP settings.
+| Key | Description | Default |
+|-----|-------------|---------|
+| `ConnectionStrings:DefaultConnection` | SQL Server connection string | LocalDB |
+| `EmailSettings:ApiKey` | Brevo API key (`xkeysib-…`). If set, Brevo is tried first | empty |
+| `EmailSettings:Host` / `Port` / `User` / `Password` / `EnableSsl` | SMTP fallback settings | `smtp.gmail.com`, `587`, SSL on |
+| `EmailSettings:From` / `FromName` | Sender address and display name | `Minute Sheet` |
+| `OpenRouterSettings:ApiKeys:0..3` | OpenRouter keys per task (see above). `OpenRouterSettings:ApiKey` is used if a slot is empty | empty |
+| `ApiKeys:Groq` | Groq API key for Whisper transcription | empty |
+| `Dictation:TranscriptionProvider` | `Groq` (falls back to local on error) or `Local` | `Groq` |
+| `LocalWhisper:Model` | Local Whisper model (`tiny`, `base`, `small`, …) | `base` |
+| `LocalWhisper:Executable` | Path to the `whisper` executable (or env `LOCAL_WHISPER_EXECUTABLE`) | `whisper` |
+| `Seed:LoadSnapshot` | Restore `Data/Seed/seed-data.json` on startup | `true` in Development, otherwise `false` |
 
-`OpenRouterSettings`:
-- `ApiKeys`: Array of OpenRouter API keys (`[0]=Summary`, `[1]=Actions`, `[2]=Agenda`, `[3]=Translation`).
+---
 
-`LocalWhisper`:
-- `Model`: Whisper model to use (e.g., `base`, `small`).
+## Seed data and default accounts
 
-`ConnectionStrings:DefaultConnection`: SQL Server connection string.
+In **Development**, the app restores a snapshot from `minutesheet/Data/Seed/seed-data.json` on startup. The snapshot contains departments, users, roles, minute sheets, approval steps, comments, shares, suggestions and vocabulary, so a fresh clone starts with realistic data.
 
-`Seed:LoadSnapshot`: Restore `Data/Seed/seed-data.json` at startup. Defaults to on in
-Development, off elsewhere.
+- **Every seeded account uses the password `Abcd1234!`.** The snapshot contains no password hashes.
+- A bootstrap admin, **`admin@ffc.com` / `Abcd1234!`**, is always created if it is missing.
+- Seeding is **idempotent**: rows that already exist (matched by their original primary key) are skipped.
+- To turn it off: `dotnet user-secrets set "Seed:LoadSnapshot" "false"`.
+- To refresh the snapshot, export each table with `FOR JSON PATH` into the same JSON shape (`departments`, `users`, `userRoles`, `sheets`, `approvalSteps`, `comments`, `shares`, `suggestions`, `vocabulary`).
+
+---
+
+## Running the tests
+
+The `minutesheet.Tests` project (xUnit + Moq + EF Core InMemory) covers the dictation pipeline (language detection, provider fallback, skipping short transcripts) and the LLM safety net.
+
+```bash
+dotnet test minutesheet.Tests
+```
+
+> The test project targets **`net10.0`**, so it needs the .NET 10 SDK. It is not included in `minutesheet.slnx`, so run it by path.
 
 ---
 
 ## Project structure
 
 ```
-minutesheet/
-├─ minutesheet.slnx                 # solution
-├─ minutesheet/
-│  ├─ Program.cs                    # DI, auth, EF, email transport wiring
-│  ├─ appsettings.json              # config (empty email placeholders)
-│  ├─ Components/
-│  │  ├─ App.razor                  # root document, CSS cache-busting
-│  │  ├─ Account/                   # Identity pages + SmtpEmailSender + OTP verify
-│  │  ├─ Pages/
-│  │     ├─ Dashboard/              # CreateSheet, History, SheetView, Actions
-│  │     └─ Admin/                  # AllSheets, Departments, Users
-│  ├─ Data/                         # EF Models (ApplicationUser, MinuteSheet, ApprovalStep, etc.)
-│  ├─ Services/                     # DocumentSummarization, SpeechTranscription, SheetPdfService, etc.
-│  └─ wwwroot/                      # app.css, bootstrap, quill, images, uploads/
+.
+├── minutesheet.slnx                    # Solution file
+├── run.bat                             # Windows launcher (loads .env, runs http profile)
+├── minutesheet/                        # Main Blazor web app
+│   ├── Program.cs                      # DI, Identity, EF Core, email, Polly, /api/transcriptions
+│   ├── appsettings.json                # Configuration (no secrets)
+│   ├── Components/
+│   │   ├── App.razor, Routes.razor     # Root document and router
+│   │   ├── Layout/                     # MainLayout, NavMenu
+│   │   ├── Account/                    # Identity pages, OTP login/verify, email sender and queue
+│   │   └── Pages/
+│   │       ├── Home.razor              # Dashboard / overview
+│   │       ├── Settings.razor          # Profile, avatar, 2FA
+│   │       ├── Dashboard/              # CreateSheet, SheetView, History, Actions
+│   │       └── Admin/                  # AllSheets, Users, CreateUser, EditUser, Departments, Vocabulary
+│   ├── Data/
+│   │   ├── *.cs                        # Entities, enums, ApprovalWorkflow rules, DbSeeder
+│   │   ├── Migrations/                 # EF Core migrations
+│   │   └── Seed/                       # Snapshot seeder + seed-data.json
+│   ├── Services/
+│   │   ├── OpenRouter/                 # OpenRouter HTTP client
+│   │   ├── DocumentSummarizationService.cs
+│   │   ├── DictationPipelineService.cs
+│   │   ├── GroqTranscriptionService.cs / LocalWhisperTranscriptionService.cs
+│   │   ├── TranscriptCorrectionService.cs / TranslationService.cs / LlmSafetyNet.cs
+│   │   ├── SheetPdfService.cs / SheetExporter.cs
+│   │   └── ToastService.cs
+│   └── wwwroot/                        # app.css, Bootstrap, Quill, quill-interop.js, images, uploads/
+├── minutesheet.Tests/                  # xUnit tests
+├── resources/images/                   # Brand assets
+└── Fertilizer company login page/      # Login page design prototype
 ```
 
 ---
 
 ## Data model
 
-- **ApplicationUser** — Identity user + `FullName`, `EmployeeNo`, `Designation`, `DepartmentId`, `AvatarPath`.
-- **Department** — `Name`, `EmployeeCount` (HR / ICT / Finance / Admin seeded).
-- **MinuteSheet** — `Category`, `DescriptionHtml`, attachment name/path, `CreatedByUser`, `CreatedAt`, `Status`, unguessable `Token`.
-- **ApprovalStep** — ordered step with `Action` (Review/Approve) and `Status` (Pending/Reviewed/Approved).
-- **SheetComment** — review / approval / resolution notes.
+| Entity | Key fields |
+|--------|------------|
+| **ApplicationUser** | Identity user + `FullName`, `EmployeeNo`, `Designation`, `DepartmentId`, `AvatarPath` |
+| **Department** | `Name`, `EmployeeCount` |
+| **MinuteSheet** | `Title`, `Category`, `Amount`, `Currency`, `DescriptionHtml`, `Summary`, `ActionItems` (JSON), `NextMeetingAgenda` (JSON), attachment name/path, `IsConfidential`, `Status`, `Token` (GUID), `DepartmentId`, `IntendedForDepartmentId`, creator, `CreatedAt` |
+| **ApprovalStep** | `StepIndex`, `Action` (Review/Approve), `Status` (Pending/Reviewed/Approved), `ApproverEmail`, `ActedAt` |
+| **SheetComment** | `Kind` (Review/Approval/Resolution), `Body`, author, optional `ApprovalStepId` |
+| **SheetShare** | `SharedWithEmail`, `SharedByUserId`, `SharedAt` (read-only access) |
+| **SheetSuggestion** | `Body` or `IsAllOk`, author |
+| **DomainVocabularyTerm** | `Category` (Person/Product/Platform/Technology/Abbreviation), `Term`, `Aliases`, `IsActive` |
+
+**Designations:** Executive, Senior Executive, Assistant Manager, Deputy Manager, Section Manager, Unit Manager.
 
 ---
 
-## Branches
+## Application routes
 
-| Branch     | Purpose |
-|------------|---------|
-| `main`     | Integration branch. |
-| `Frontend` | UI / Blazor component work. |
-| `Backend`  | Server logic, workflow, email, identity. |
-| `Database` | EF Core model & migrations. |
+| Route | Access | Purpose |
+|-------|--------|---------|
+| `/` | Signed in | Dashboard overview |
+| `/dashboard/create` | Signed in | Create a minute sheet |
+| `/dashboard/sheet/{token}` | Signed in, plus visibility rules | View, review, approve, share or comment on a sheet |
+| `/dashboard/sheet/{token}/edit` | Creator | Edit a sheet |
+| `/dashboard/history` | Signed in | Sheets you created |
+| `/dashboard/actions` | Signed in | Items waiting for your approval, and reviews you need to resolve |
+| `/settings`, `/settings/two-factor` | Signed in | Profile and 2FA |
+| `/admin/sheets` | Admin | All minute sheets |
+| `/admin/users`, `/admin/users/create`, `/admin/users/{id}/edit` | Admin | User management |
+| `/admin/departments` | Admin | Department management |
+| `/admin/vocabulary` | Admin | Dictation vocabulary |
+| `/Account/Login`, `/Account/Register`, `/Account/LoginOtp`, `/Account/VerifyOtp` | Public | Authentication |
+| `POST /api/transcriptions` | Signed in | Audio → English text (dictation pipeline) |
 
 ---
 
-## Notes
+## Troubleshooting
 
-- **Secrets never belong in the repo.** Email and OpenRouter credentials go in user-secrets.
-- Uploaded attachments (`wwwroot/uploads/`) are runtime data and are git-ignored.
+| Problem | Fix |
+|---------|-----|
+| No OTP email arrives | Check the console for `No email transport configured`. Set the Brevo key or SMTP credentials. With Gmail, use an **app password**, not your account password. |
+| `Cannot open database` / LocalDB errors | Run `sqllocaldb start mssqllocaldb`, or point `DefaultConnection` at another SQL Server instance. |
+| AI summary returns an error or nothing | Make sure `OpenRouterSettings:ApiKeys:*` is set. Free models are rate-limited, so wait and try again. |
+| Dictation returns `503` | Groq key is missing and the local Whisper fallback is not installed. Add `ApiKeys:Groq`, or install Python, ffmpeg and `openai-whisper`. |
+| Local Whisper is very slow | Use a smaller model: `LocalWhisper:Model` = `base` or `tiny`. |
+| Microphone does not work | Browsers only allow microphone access on `localhost` or HTTPS. |
+
+---
+
+## Security notes
+
+- **Never commit secrets.** Keep keys in user-secrets, environment variables or a git-ignored `.env`.
+- Change the default `Abcd1234!` passwords and turn off `Seed:LoadSnapshot` on any non-development deployment.
+- Uploaded attachments and avatars (`wwwroot/uploads/`) are runtime data and are git-ignored.
+- QuestPDF runs under its **Community licence**. Check that your organisation qualifies before using it in production.
+
+---
+
+*Developed during the FFC internship programme.*
